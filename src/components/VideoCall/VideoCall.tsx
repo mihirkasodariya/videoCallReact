@@ -11,7 +11,9 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-const socket = io("https://new-node-gzvq.onrender.com");
+const socket = io("https://new-node-gzvq.onrender.com", {
+  transports: ["websocket"],
+});
 
 export function VideoCall() {
   const [waiting, setWaiting] = useState(true);
@@ -27,7 +29,7 @@ export function VideoCall() {
   const pendingSignals = useRef<any[]>([]);
 
   useEffect(() => {
-    const initMedia = async () => {
+    const init = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
@@ -39,11 +41,11 @@ export function VideoCall() {
 
         socket.emit("join-room");
       } catch {
-        setError("Camera or Mic permission denied");
+        setError("Camera / Mic permission denied");
       }
     };
 
-    initMedia();
+    init();
 
     socket.on("match-found", ({ roomID, initiator }) => {
       setWaiting(false);
@@ -53,8 +55,12 @@ export function VideoCall() {
     });
 
     socket.on("signal", (signal) => {
-      if (peerRef.current) {
-        peerRef.current.signal(signal);
+      if (!signal) return;
+
+      if (peerRef.current && !peerRef.current.destroyed) {
+        try {
+          peerRef.current.signal(signal);
+        } catch {}
       } else {
         pendingSignals.current.push(signal);
       }
@@ -63,6 +69,7 @@ export function VideoCall() {
     return () => {
       socket.off("match-found");
       socket.off("signal");
+      pendingSignals.current = [];
       peerRef.current?.destroy();
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
@@ -73,6 +80,8 @@ export function VideoCall() {
     roomID: string,
     stream: MediaStream
   ) => {
+    peerRef.current?.destroy();
+
     const peer = new Peer({
       initiator,
       trickle: false,
@@ -80,13 +89,22 @@ export function VideoCall() {
       config: {
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:global.stun.twilio.com:3478" },
+          {
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+          },
+          {
+            urls: "turn:openrelay.metered.ca:443",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+          },
         ],
       },
     });
 
     peer.on("signal", (data) => {
-      socket.emit("signal", { roomID, signal: data });
+      if (data) socket.emit("signal", { roomID, signal: data });
     });
 
     peer.on("stream", (remoteStream) => {
@@ -95,9 +113,6 @@ export function VideoCall() {
       }
     });
 
-    peer.on("error", console.error);
-
-    // 🔥 Apply queued signals
     pendingSignals.current.forEach((s) => peer.signal(s));
     pendingSignals.current = [];
 
@@ -106,6 +121,7 @@ export function VideoCall() {
 
   const handleSkip = () => {
     setWaiting(true);
+    pendingSignals.current = [];
     peerRef.current?.destroy();
     peerRef.current = null;
     if (userVideo.current) userVideo.current.srcObject = null;
@@ -130,7 +146,7 @@ export function VideoCall() {
 
   if (error) {
     return (
-      <div className="flex h-screen items-center justify-center text-white bg-black">
+      <div className="flex h-screen items-center justify-center bg-black text-white">
         <AlertCircle className="text-red-500 mr-2" /> {error}
       </div>
     );
@@ -138,8 +154,8 @@ export function VideoCall() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-white">
-      <div className="p-4 text-center font-bold bg-black">
-        Omegle Clone
+      <div className="p-4 bg-black text-center font-bold">
+        Random Video Call
       </div>
 
       <div className="flex-1 flex gap-4 p-4">
@@ -147,7 +163,12 @@ export function VideoCall() {
           {waiting ? (
             <Loader2 className="animate-spin m-auto mt-20" />
           ) : (
-            <video ref={userVideo} autoPlay playsInline className="w-full h-full object-cover" />
+            <video
+              ref={userVideo}
+              autoPlay
+              playsInline
+              className="w-full h-full object-cover"
+            />
           )}
         </div>
 
@@ -162,10 +183,16 @@ export function VideoCall() {
         </div>
       </div>
 
-      <div className="h-20 flex justify-center items-center gap-4 bg-black">
-        <button onClick={toggleMic}>{micOn ? <Mic /> : <MicOff />}</button>
-        <button onClick={toggleCamera}>{cameraOn ? <Video /> : <VideoOff />}</button>
-        <button onClick={handleSkip}><SkipForward /></button>
+      <div className="h-20 bg-black flex justify-center items-center gap-6">
+        <button onClick={toggleMic}>
+          {micOn ? <Mic /> : <MicOff />}
+        </button>
+        <button onClick={toggleCamera}>
+          {cameraOn ? <Video /> : <VideoOff />}
+        </button>
+        <button onClick={handleSkip}>
+          <SkipForward />
+        </button>
       </div>
     </div>
   );
