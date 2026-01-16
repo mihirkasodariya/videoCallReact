@@ -13,6 +13,7 @@ import {
 
 const socket = io("https://new-node-gzvq.onrender.com", {
   transports: ["websocket"],
+  reconnection: true,
 });
 
 export function VideoCall() {
@@ -28,6 +29,9 @@ export function VideoCall() {
   const peerRef = useRef<Peer.Instance | null>(null);
   const pendingSignals = useRef<any[]>([]);
 
+  // =======================
+  // INIT CAMERA
+  // =======================
   useEffect(() => {
     const init = async () => {
       try {
@@ -37,10 +41,16 @@ export function VideoCall() {
         });
 
         streamRef.current = stream;
-        if (myVideo.current) myVideo.current.srcObject = stream;
+
+        if (myVideo.current) {
+          myVideo.current.srcObject = stream;
+          myVideo.current.muted = true;
+          await myVideo.current.play();
+        }
 
         socket.emit("join-room");
-      } catch {
+      } catch (err) {
+        console.error(err);
         setError("Camera / Mic permission denied");
       }
     };
@@ -60,7 +70,9 @@ export function VideoCall() {
       if (peerRef.current && !peerRef.current.destroyed) {
         try {
           peerRef.current.signal(signal);
-        } catch {}
+        } catch (e) {
+          console.warn("Signal ignored", e);
+        }
       } else {
         pendingSignals.current.push(signal);
       }
@@ -75,6 +87,9 @@ export function VideoCall() {
     };
   }, []);
 
+  // =======================
+  // CREATE PEER
+  // =======================
   const createPeer = (
     initiator: boolean,
     roomID: string,
@@ -108,17 +123,34 @@ export function VideoCall() {
     });
 
     peer.on("stream", (remoteStream) => {
-      if (userVideo.current) {
-        userVideo.current.srcObject = remoteStream;
-      }
+      if (!userVideo.current) return;
+
+      userVideo.current.srcObject = remoteStream;
+      userVideo.current.muted = false;
+
+      userVideo.current.onloadedmetadata = () => {
+        userVideo.current
+          ?.play()
+          .catch((e) => console.warn("Autoplay blocked:", e));
+      };
     });
 
-    pendingSignals.current.forEach((s) => peer.signal(s));
+    peer.on("error", (err) => console.error("Peer error:", err));
+
+    // Apply queued signals safely
+    pendingSignals.current.forEach((s) => {
+      try {
+        peer.signal(s);
+      } catch {}
+    });
     pendingSignals.current = [];
 
     peerRef.current = peer;
   };
 
+  // =======================
+  // CONTROLS
+  // =======================
   const handleSkip = () => {
     setWaiting(true);
     pendingSignals.current = [];
@@ -159,25 +191,25 @@ export function VideoCall() {
       </div>
 
       <div className="flex-1 flex gap-4 p-4">
-        <div className="flex-1 bg-black rounded">
+        <div className="flex-1 bg-black rounded overflow-hidden">
           {waiting ? (
             <Loader2 className="animate-spin m-auto mt-20" />
           ) : (
             <video
               ref={userVideo}
-              autoPlay
               playsInline
+              autoPlay
               className="w-full h-full object-cover"
             />
           )}
         </div>
 
-        <div className="w-1/3 bg-gray-800 rounded">
+        <div className="w-1/3 bg-gray-800 rounded overflow-hidden">
           <video
             ref={myVideo}
+            playsInline
             autoPlay
             muted
-            playsInline
             className="w-full h-full object-cover scale-x-[-1]"
           />
         </div>
