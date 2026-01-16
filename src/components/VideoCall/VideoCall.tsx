@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 // 🔥 Socket URL
-const socket = io("http://localhost:5000");
+const socket = io("https://new-node-gzvq.onrender.com");
 
 export function VideoCall() {
   const [waiting, setWaiting] = useState(true);
